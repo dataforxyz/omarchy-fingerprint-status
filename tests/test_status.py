@@ -62,14 +62,26 @@ class StatusTests(unittest.TestCase):
         self.assertIn("Middle-click: clear status history", payload["tooltip"])
         self.assertIn("Right-click: actions menu", payload["tooltip"])
 
-    def test_clear_history_removes_state(self):
+    def test_clear_history_sets_journal_cutoff(self):
         path = status.state_path()
         path.parent.mkdir(parents=True)
-        path.write_text('{"active":true}')
-        with patch.object(status, "notify") as notify:
+        path.write_text('{"active":true,"last_error":900}')
+        with patch.object(status.time, "time", return_value=1000), \
+             patch.object(status, "notify") as notify:
             self.assertEqual(status.clear_history(), 0)
-        self.assertFalse(path.exists())
+        saved = status.load_state(path)
+        self.assertFalse(saved["active"])
+        self.assertEqual(saved["last_check"], 1000)
+        self.assertEqual(saved["ignore_errors_before"], 1000)
+        self.assertNotIn("last_error", saved)
         notify.assert_called_once_with("Fingerprint status", "Status history cleared")
+
+    def test_cleared_pre_reset_error_does_not_turn_red_again(self):
+        with patch.object(status.time, "time", return_value=1000), \
+             patch.object(status, "notify"):
+            status.clear_history()
+        payload = self.inspect(error=(995, "reader is already claimed"), now=1001)
+        self.assertEqual(payload["class"], "ready")
 
     def test_menu_dispatches_test_to_floating_terminal(self):
         completed = status.subprocess.CompletedProcess([], 0, "Test fingerprint reader\n", "")
