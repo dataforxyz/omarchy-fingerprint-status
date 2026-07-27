@@ -169,7 +169,12 @@ def inspect(now: float | None = None) -> dict[str, Any]:
 
     last_check = float(state.get("last_check", now - error_ttl))
     error_time, error_message = recent_error(last_check)
-    if error_time and error_time >= float(state.get("last_error", 0)):
+    ignore_errors_before = float(state.get("ignore_errors_before", 0))
+    if (
+        error_time
+        and error_time > ignore_errors_before
+        and error_time >= float(state.get("last_error", 0))
+    ):
         state["last_error"] = error_time
         state["last_error_message"] = error_message
 
@@ -240,14 +245,21 @@ def notify(title: str, message: str = "") -> None:
         print(f"{title}: {message}".rstrip())
 
 
-def clear_history() -> int:
+def clear_history(*, notify_user: bool = True) -> int:
+    now = time.time()
     path = state_path()
     try:
-        path.unlink(missing_ok=True)
+        save_state(path, {
+            "active": False,
+            "last_check": now,
+            "ignore_errors_before": now,
+        })
     except OSError as exc:
-        notify("Fingerprint status", f"Could not clear history: {exc}")
+        if notify_user:
+            notify("Fingerprint status", f"Could not clear history: {exc}")
         return 1
-    notify("Fingerprint status", "Status history cleared")
+    if notify_user:
+        notify("Fingerprint status", "Status history cleared")
     return 0
 
 
@@ -269,10 +281,7 @@ def reset_reader() -> int:
         check=False,
     )
     if result.returncode == 0:
-        try:
-            state_path().unlink(missing_ok=True)
-        except OSError:
-            pass
+        clear_history(notify_user=False)
         print("fprintd restarted and status history cleared.")
     else:
         print("Could not restart fprintd.", file=sys.stderr)
