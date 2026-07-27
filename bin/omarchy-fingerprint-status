@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Waybar status module for fprintd fingerprint readers."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+ICON = "󰈷"
+DEVICE_RE = re.compile(r'"(/net/reactivated/Fprint/Device/[^" ]+)"')
+ERROR_PATTERNS = (
+    ("already claimed", "reader is already claimed"),
+    ("still busy with another operation", "reader is still busy"),
+    ("device was disconnected", "reader disconnected during verification"),
+    ("device has been removed", "reader was removed"),
+    ("power down failed", "reader failed to power down"),
+    ("unexpected result from device", "reader returned an unexpected result"),
+)
+
+
+def run(*args: str, timeout: float = 3.0) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return subprocess.CompletedProcess(args, 127, "", str(exc))
+
+
+def state_path() -> Path:
+    root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    return root / "omarchy-fingerprint-status" / "state.json"
+
+
+def load_state(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(path: Path, state: dict[str, Any]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state, separators=(",", ":")))
+        temporary.replace(path)
+    except OSError:
+        pass
+
+
+def get_devices() -> list[str]:
+    result = run(
+        "busctl", "call", "net.reactivated.Fprint",
+        "/net/reactivated/Fprint/Manager",
+        "net.reactivated.Fprint.Manager", "GetDevices",
+    )
+    if result.returncode != 0:
+        return []
+    return DEVICE_RE.findall(result.stdout)
+
+
+def get_property(device: str, name: str) -> str | None:
+    result = run(
+        "busctl", "get-property", "net.reactivated.Fprint", device,
+        "net.reactivated.Fprint.Device", name,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    if value.startswith("b "):
+        return value[2:].strip()
+    if value.startswith('s "') and value.endswith('"'):
+        return value[3:-1]
+    return value.split(" ", 1)[-1] if " " in value else value
+
+
+def service_condition() -> tuple[bool, str]:
+    masked = run("systemctl", "is-enabled", "fprintd.service")
+    if masked.stdout.strip() == "masked":
+        return False, "fprintd is masked"
+    failed = run("systemctl", "is-failed", "fprintd.service")
+    if failed.stdout.strip() == "failed":
+        return False, "fprintd service failed"
+    return True, ""
+
+
+def recent_error(since_epoch: float) -> tuple[float, str]:
+    since = f"@{max(0, int(since_epoch) - 1)}"
+    result = run(
+        "journalctl", "-u", "fprintd.service", "--since", since,
+        "--no-pager", "-o", "short-unix", "-n", "80",
+    )
+    newest_time = 0.0
+    newest_message = ""
+    if result.returncode != 0:
+        return newest_time, newest_message
+    for line in result.stdout.splitlines():
+        lower = line.lower()
+        for needle, description in ERROR_PATTERNS:
+            if needle in lower:
+                match = re.match(r"^(\d+(?:\.\d+)?)", line)
+                event_time = float(match.group(1)) if match else time.time()
+                if event_time >= newest_time:
+                    newest_time = event_time
+                    newest_message = description
+                break
+    return newest_time, newest_message
+
+
+def human_age(epoch: float | int | None, now: float) -> str:
+    if not epoch:
+        return "never observed"
+    seconds = max(0, int(now - float(epoch)))
+    if seconds < 5:
+        return "just now"
+    if seconds < 60:
+        return f"{seconds}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours}h ago"
+    return datetime.fromtimestamp(float(epoch)).astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def inspect(now: float | None = None) -> dict[str, Any]:
+    now = time.time() if now is None else now
+    path = state_path()
+    state = load_state(path)
+    active_timeout = max(5, int(os.environ.get("OMARCHY_FINGERPRINT_ACTIVE_TIMEOUT", "30")))
+    error_ttl = max(10, int(os.environ.get("OMARCHY_FINGERPRINT_ERROR_TTL", "300")))
+
+    service_ok, service_reason = service_condition()
+    devices = get_devices() if service_ok else []
+    names: list[str] = []
+    active = False
+    for device in devices:
+        name = get_property(device, "name")
+        if name and name not in names:
+            names.append(name)
+        needed = get_property(device, "finger-needed") == "true"
+        present = get_property(device, "finger-present") == "true"
+        active = active or needed or present
+
+    previous_active = bool(state.get("active"))
+    if active:
+        if not previous_active or not state.get("active_since"):
+            state["active_since"] = now
+        state["last_used"] = now
+    elif previous_active:
+        state["last_used"] = now
+        state["active_since"] = None
+
+    last_check = float(state.get("last_check", now - error_ttl))
+    error_time, error_message = recent_error(last_check)
+    if error_time and error_time >= float(state.get("last_error", 0)):
+        state["last_error"] = error_time
+        state["last_error_message"] = error_message
+
+    state.update({"active": active, "last_check": now, "devices": names})
+    save_state(path, state)
+
+    active_for = now - float(state.get("active_since") or now)
+    last_error = float(state.get("last_error", 0))
+    error_is_recent = bool(last_error and now - last_error <= error_ttl)
+
+    if not service_ok or not devices:
+        status = "disabled"
+        reason = service_reason or "no fingerprint reader detected"
+    elif active and active_for >= active_timeout:
+        status = "stuck"
+        reason = f"reader has remained active for {int(active_for)}s"
+    elif error_is_recent and state.get("last_error_message") in {
+        "reader is already claimed", "reader is still busy"
+    }:
+        status = "stuck"
+        reason = str(state["last_error_message"])
+    elif active:
+        status = "active"
+        reason = "reader is waiting for a fingerprint"
+    else:
+        status = "ready"
+        reason = "reader is ready"
+
+    tooltip = [
+        f"Fingerprint reader: {status}",
+        reason,
+        "",
+        f"Device: {', '.join(names) if names else 'none'}",
+        f"Last used: {human_age(state.get('last_used'), now)}",
+    ]
+    if state.get("last_error"):
+        tooltip.append(f"Last issue: {human_age(state['last_error'], now)} — {state.get('last_error_message', 'unknown')}")
+    tooltip.extend(("", "Gray disabled · Green ready", "Blue active · Red stuck"))
+
+    return {
+        "text": ICON,
+        "class": status,
+        "tooltip": "\n".join(tooltip),
+        "alt": status,
+        "percentage": 100 if status == "ready" else 0,
+    }
+
+
+def diagnose() -> int:
+    payload = inspect()
+    print(payload["tooltip"])
+    print()
+    print("fprintd:", run("systemctl", "is-active", "fprintd.service").stdout.strip() or "unknown")
+    print("devices:", len(get_devices()))
+    return 0
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] in {"diagnose", "--diagnose"}:
+        return diagnose()
+    print(json.dumps(inspect(), ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,70 @@
+# omarchy-fingerprint-status
+
+A small [Waybar](https://github.com/Alexays/Waybar) indicator for fingerprint-reader health on [Omarchy](https://omarchy.org/).
+
+It helps make stuck `fprintd` sessions visible instead of leaving you to discover them when authentication stops working.
+
+## States
+
+| Color | Class | Meaning |
+|---|---|---|
+| Gray | `disabled` | No reader was found, or `fprintd` is masked/failed |
+| Green | `ready` | Reader detected and ready |
+| Blue | `active` | Reader is waiting for or sensing a fingerprint |
+| Red | `stuck` | Reader stayed active too long, is already claimed, or reported that it is busy |
+
+Hover the icon for the device name, current reason, last observed use, and last fingerprint issue. Right-click runs a short diagnosis in the Waybar process log; run `omarchy-fingerprint-status diagnose` in a terminal for readable output.
+
+## Install
+
+```bash
+git clone https://github.com/dataforxyz/omarchy-fingerprint-status.git
+cd omarchy-fingerprint-status
+./install.sh
+```
+
+The installer:
+
+- installs `omarchy-fingerprint-status` to `~/.local/bin/`
+- backs up `~/.config/waybar/config.jsonc` and `style.css`
+- adds the custom module to `modules-right`
+- adds state colors to Waybar CSS
+- restarts Waybar through `omarchy restart waybar`
+
+No root privileges or extra Python packages are required. Runtime dependencies are Python 3, `systemd`/`busctl`, `journalctl`, `fprintd`, and Waybar.
+
+## Configuration
+
+The defaults are intentionally conservative:
+
+```bash
+# Seconds continuously active before blue becomes red (default: 30)
+export OMARCHY_FINGERPRINT_ACTIVE_TIMEOUT=30
+
+# Seconds a "claimed" or "busy" journal event remains red (default: 300)
+export OMARCHY_FINGERPRINT_ERROR_TTL=300
+```
+
+Set these in the environment inherited by Waybar, then restart Waybar.
+
+## How detection works
+
+The module reads the standard `net.reactivated.Fprint` D-Bus device properties:
+
+- `finger-needed`
+- `finger-present`
+- device `name`
+
+It also checks recent `fprintd.service` journal messages for the common stuck-reader symptoms “already claimed” and “still busy with another operation.” State is saved under `$XDG_STATE_HOME/omarchy-fingerprint-status/` so elapsed active time and last use survive individual Waybar polls.
+
+The D-Bus API does not expose a public `claimed` property. Consequently, a silent stale claim can only be identified after `fprintd` reports it as already claimed/busy, or while the reader remains in its active state.
+
+## Development
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+## License
+
+MIT
