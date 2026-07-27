@@ -56,6 +56,28 @@ class StatusTests(unittest.TestCase):
         payload = self.inspect(error=(995, "reader is already claimed"), now=1000)
         self.assertEqual(payload["class"], "stuck")
 
+    def test_tooltip_documents_click_actions(self):
+        payload = self.inspect()
+        self.assertIn("Left-click: test reader", payload["tooltip"])
+        self.assertIn("Middle-click: clear status history", payload["tooltip"])
+        self.assertIn("Right-click: actions menu", payload["tooltip"])
+
+    def test_clear_history_removes_state(self):
+        path = status.state_path()
+        path.parent.mkdir(parents=True)
+        path.write_text('{"active":true}')
+        with patch.object(status, "notify") as notify:
+            self.assertEqual(status.clear_history(), 0)
+        self.assertFalse(path.exists())
+        notify.assert_called_once_with("Fingerprint status", "Status history cleared")
+
+    def test_menu_dispatches_test_to_floating_terminal(self):
+        completed = status.subprocess.CompletedProcess([], 0, "Test fingerprint reader\n", "")
+        with patch.object(status, "run", return_value=completed), \
+             patch.object(status, "launch_terminal", return_value=0) as launch:
+            self.assertEqual(status.actions_menu(), 0)
+        launch.assert_called_once_with("test")
+
 
 if __name__ == "__main__":
     unittest.main()

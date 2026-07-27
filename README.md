@@ -13,7 +13,27 @@ It helps make stuck `fprintd` sessions visible instead of leaving you to discove
 | Blue | `active` | Reader is waiting for or sensing a fingerprint |
 | Red | `stuck` | Reader stayed active too long, is already claimed, or reported that it is busy |
 
-Hover the icon for the device name, current reason, last observed use, and last fingerprint issue. Right-click runs a short diagnosis in the Waybar process log; run `omarchy-fingerprint-status diagnose` in a terminal for readable output.
+Hover the icon for the device name, current reason, last observed use, last fingerprint issue, and click shortcuts.
+
+## Click actions
+
+| Input | Action |
+|---|---|
+| Left-click | Open a floating terminal and run an interactive `fprintd-verify` test |
+| Middle-click | Clear the indicator's saved status/error history |
+| Right-click | Open an actions menu with Test, Diagnose, Clear history, and Reset fprintd |
+
+**Reset fprintd** opens a terminal and runs `sudo systemctl restart fprintd.service`, so you can see the result and authorize it explicitly. It also clears the indicator history after a successful restart.
+
+The equivalent terminal commands are:
+
+```bash
+omarchy-fingerprint-status test
+omarchy-fingerprint-status diagnose
+omarchy-fingerprint-status clear
+omarchy-fingerprint-status reset
+omarchy-fingerprint-status menu
+```
 
 ## Install
 

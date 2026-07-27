@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -206,7 +207,15 @@ def inspect(now: float | None = None) -> dict[str, Any]:
     ]
     if state.get("last_error"):
         tooltip.append(f"Last issue: {human_age(state['last_error'], now)} — {state.get('last_error_message', 'unknown')}")
-    tooltip.extend(("", "Gray disabled · Green ready", "Blue active · Red stuck"))
+    tooltip.extend((
+        "",
+        "Gray disabled · Green ready",
+        "Blue active · Red stuck",
+        "",
+        "Left-click: test reader",
+        "Middle-click: clear status history",
+        "Right-click: actions menu",
+    ))
 
     return {
         "text": ICON,
@@ -226,11 +235,111 @@ def diagnose() -> int:
     return 0
 
 
-def main() -> int:
-    if len(sys.argv) > 1 and sys.argv[1] in {"diagnose", "--diagnose"}:
-        return diagnose()
-    print(json.dumps(inspect(), ensure_ascii=False))
+def notify(title: str, message: str = "") -> None:
+    if run("notify-send", "-u", "low", title, message).returncode != 0:
+        print(f"{title}: {message}".rstrip())
+
+
+def clear_history() -> int:
+    path = state_path()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        notify("Fingerprint status", f"Could not clear history: {exc}")
+        return 1
+    notify("Fingerprint status", "Status history cleared")
     return 0
+
+
+def test_reader() -> int:
+    try:
+        return subprocess.run(
+            ("fprintd-verify", os.environ.get("USER", "")),
+            check=False,
+        ).returncode
+    except OSError as exc:
+        print(f"Could not start fingerprint test: {exc}", file=sys.stderr)
+        return 127
+
+
+def reset_reader() -> int:
+    print("Restarting fprintd…")
+    result = subprocess.run(
+        ("sudo", "systemctl", "restart", "fprintd.service"),
+        check=False,
+    )
+    if result.returncode == 0:
+        try:
+            state_path().unlink(missing_ok=True)
+        except OSError:
+            pass
+        print("fprintd restarted and status history cleared.")
+    else:
+        print("Could not restart fprintd.", file=sys.stderr)
+    return result.returncode
+
+
+def launch_terminal(action: str) -> int:
+    launcher = "omarchy-launch-floating-terminal-with-presentation"
+    command = f"{shlex.quote(str(Path(__file__).resolve()))} {shlex.quote(action)}"
+    try:
+        subprocess.Popen(
+            (launcher, command),
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return 0
+    except OSError as exc:
+        notify("Fingerprint status", f"Could not open terminal: {exc}")
+        return 1
+
+
+def actions_menu() -> int:
+    options = (
+        "Test fingerprint reader",
+        "Diagnose fingerprint reader",
+        "Clear status history",
+        "Reset fprintd service",
+    )
+    result = run("omarchy-menu-select", "Fingerprint", *options, timeout=120.0)
+    choice = result.stdout.strip()
+    if choice == options[0]:
+        return launch_terminal("test")
+    if choice == options[1]:
+        return launch_terminal("diagnose")
+    if choice == options[2]:
+        return clear_history()
+    if choice == options[3]:
+        return launch_terminal("reset")
+    return 0
+
+
+def main() -> int:
+    command = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if command in {"status", "--status"}:
+        print(json.dumps(inspect(), ensure_ascii=False))
+        return 0
+    if command in {"diagnose", "--diagnose"}:
+        return diagnose()
+    if command == "test":
+        return test_reader()
+    if command == "open-test":
+        return launch_terminal("test")
+    if command == "clear":
+        return clear_history()
+    if command == "reset":
+        return reset_reader()
+    if command == "open-reset":
+        return launch_terminal("reset")
+    if command == "menu":
+        return actions_menu()
+    print(
+        "Usage: omarchy-fingerprint-status "
+        "[status|diagnose|test|open-test|clear|reset|open-reset|menu]",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":
