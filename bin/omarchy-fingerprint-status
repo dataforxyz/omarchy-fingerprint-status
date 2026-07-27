@@ -89,6 +89,10 @@ def get_property(device: str, name: str) -> str | None:
     return value.split(" ", 1)[-1] if " " in value else value
 
 
+def service_is_active() -> bool:
+    return run("systemctl", "is-active", "fprintd.service").stdout.strip() == "active"
+
+
 def service_condition() -> tuple[bool, str]:
     masked = run("systemctl", "is-enabled", "fprintd.service")
     if masked.stdout.strip() == "masked":
@@ -147,16 +151,23 @@ def inspect(now: float | None = None) -> dict[str, Any]:
     error_ttl = max(10, int(os.environ.get("OMARCHY_FINGERPRINT_ERROR_TTL", "300")))
 
     service_ok, service_reason = service_condition()
-    devices = get_devices() if service_ok else []
-    names: list[str] = []
+    daemon_active = service_is_active() if service_ok else False
+    discovered = bool(state.get("device_discovered"))
+    should_query = service_ok and (daemon_active or not discovered)
+    devices = get_devices() if should_query else []
+    cached_names = state.get("devices", [])
+    names = [name for name in cached_names if isinstance(name, str)] if isinstance(cached_names, list) else []
     active = False
-    for device in devices:
-        name = get_property(device, "name")
-        if name and name not in names:
-            names.append(name)
-        needed = get_property(device, "finger-needed") == "true"
-        present = get_property(device, "finger-present") == "true"
-        active = active or needed or present
+    if should_query:
+        names = []
+        for device in devices:
+            name = get_property(device, "name")
+            if name and name not in names:
+                names.append(name)
+            needed = get_property(device, "finger-needed") == "true"
+            present = get_property(device, "finger-present") == "true"
+            active = active or needed or present
+        state["device_discovered"] = True
 
     previous_active = bool(state.get("active"))
     if active:
@@ -185,7 +196,7 @@ def inspect(now: float | None = None) -> dict[str, Any]:
     last_error = float(state.get("last_error", 0))
     error_is_recent = bool(last_error and now - last_error <= error_ttl)
 
-    if not service_ok or not devices:
+    if not service_ok or not names:
         status = "disabled"
         reason = service_reason or "no fingerprint reader detected"
     elif active and active_for >= active_timeout:
