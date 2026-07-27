@@ -27,6 +27,7 @@ class StatusTests(unittest.TestCase):
         devices = ["/net/reactivated/Fprint/Device/0"] if devices is None else devices
         props = {"name": "Test Reader", "finger-needed": "false", "finger-present": "false"} if props is None else props
         with patch.object(status, "service_condition", return_value=service), \
+             patch.object(status, "service_is_active", return_value=True), \
              patch.object(status, "get_devices", return_value=devices), \
              patch.object(status, "get_property", side_effect=lambda _device, key: props[key]), \
              patch.object(status, "recent_error", return_value=error):
@@ -82,6 +83,22 @@ class StatusTests(unittest.TestCase):
             status.clear_history()
         payload = self.inspect(error=(995, "reader is already claimed"), now=1001)
         self.assertEqual(payload["class"], "ready")
+
+    def test_inactive_daemon_uses_cache_without_waking_fprintd(self):
+        path = status.state_path()
+        status.save_state(path, {
+            "device_discovered": True,
+            "devices": ["Test Reader"],
+            "active": False,
+            "last_check": 990,
+        })
+        with patch.object(status, "service_condition", return_value=(True, "")), \
+             patch.object(status, "service_is_active", return_value=False), \
+             patch.object(status, "get_devices") as get_devices, \
+             patch.object(status, "recent_error", return_value=(0, "")):
+            payload = status.inspect(now=1000)
+        self.assertEqual(payload["class"], "ready")
+        get_devices.assert_not_called()
 
     def test_menu_dispatches_test_to_floating_terminal(self):
         completed = status.subprocess.CompletedProcess([], 0, "Test fingerprint reader\n", "")
