@@ -20,17 +20,20 @@ cp -a "$STYLE" "$STYLE.bak.$timestamp"
 
 python3 - "$CONFIG" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 path = Path(sys.argv[1])
 text = path.read_text()
 module = 'custom/fingerprint-status'
 block = '''  "custom/fingerprint-status": {
-    "exec": "$HOME/.local/bin/omarchy-fingerprint-status",
+    "exec": "$HOME/.local/bin/omarchy-fingerprint-status status",
     "return-type": "json",
     "interval": 2,
     "tooltip": true,
-    "on-click-right": "$HOME/.local/bin/omarchy-fingerprint-status diagnose"
+    "on-click": "$HOME/.local/bin/omarchy-fingerprint-status open-test",
+    "on-click-middle": "$HOME/.local/bin/omarchy-fingerprint-status clear",
+    "on-click-right": "$HOME/.local/bin/omarchy-fingerprint-status menu"
   }'''
 
 if f'"{module}"' not in text.split('"custom/fingerprint-status":', 1)[0]:
@@ -41,7 +44,12 @@ if f'"{module}"' not in text.split('"custom/fingerprint-status":', 1)[0]:
     insert = start + len(marker)
     text = text[:insert] + f'\n    "{module}",' + text[insert:]
 
-if '"custom/fingerprint-status":' not in text:
+if '"custom/fingerprint-status":' in text:
+    pattern = r'(?ms)^  "custom/fingerprint-status": \{\n.*?^  \}'
+    text, replacements = re.subn(pattern, block, text, count=1)
+    if replacements != 1:
+        raise SystemExit('Could not update existing fingerprint-status module')
+else:
     end = text.rfind('}')
     if end < 0:
         raise SystemExit('Waybar config does not have a closing brace')
