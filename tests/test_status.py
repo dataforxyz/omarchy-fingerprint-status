@@ -117,15 +117,56 @@ class StatusTests(unittest.TestCase):
             self.assertEqual(status.actions_menu(), 0)
         launch.assert_called_once_with("enroll", "right-index-finger")
 
-    def test_menu_replaces_selected_finger_in_floating_terminal(self):
+    def test_menu_replaces_selected_registered_finger_in_floating_terminal(self):
         selections = (
             status.subprocess.CompletedProcess([], 0, "Replace fingerprint\n", ""),
-            status.subprocess.CompletedProcess([], 0, "Left thumb\n", ""),
+            status.subprocess.CompletedProcess([], 0, "Left thumb (registered)\n", ""),
         )
         with patch.object(status, "run", side_effect=selections), \
+             patch.object(status, "enrolled_fingers", return_value=["left-thumb"]), \
              patch.object(status, "launch_terminal", return_value=0) as launch:
             self.assertEqual(status.actions_menu(), 0)
         launch.assert_called_once_with("replace", "left-thumb")
+
+    def test_enrolled_fingers_parses_fprintd_list_in_menu_order(self):
+        completed = status.subprocess.CompletedProcess(
+            [],
+            0,
+            """Fingerprints for user alice on Test Reader:
+ - #0: right-thumb
+ - #1: left-index-finger
+ - #2: unknown-finger
+""",
+            "",
+        )
+        with patch.dict(os.environ, {"USER": "alice"}), \
+             patch.object(status, "run", return_value=completed) as run:
+            self.assertEqual(
+                status.enrolled_fingers(),
+                ["left-index-finger", "right-thumb"],
+            )
+        run.assert_called_once_with("fprintd-list", "alice", timeout=10.0)
+
+    def test_replace_menu_reports_when_no_fingerprints_are_registered(self):
+        completed = status.subprocess.CompletedProcess([], 0, "Replace fingerprint\n", "")
+        with patch.dict(os.environ, {"USER": "alice"}), \
+             patch.object(status, "run", return_value=completed), \
+             patch.object(status, "enrolled_fingers", return_value=[]), \
+             patch.object(status, "notify") as notify, \
+             patch.object(status, "launch_terminal") as launch:
+            self.assertEqual(status.actions_menu(), 0)
+        notify.assert_called_once_with(
+            "Fingerprint status",
+            "No fingerprints are registered for alice",
+        )
+        launch.assert_not_called()
+
+    def test_enrolled_finger_list_failure_is_reported(self):
+        completed = status.subprocess.CompletedProcess([], 1, "", "reader unavailable\n")
+        with patch.object(status, "run", return_value=completed), \
+             patch.object(status, "notify") as notify:
+            self.assertIsNone(status.enrolled_fingers())
+        notify.assert_called_once_with("Fingerprint status", "reader unavailable")
 
     def test_menu_resets_fingerprints_in_floating_terminal(self):
         completed = status.subprocess.CompletedProcess([], 0, "Reset all fingerprints\n", "")

@@ -38,6 +38,7 @@ FINGERS = (
     ("Right little finger", "right-little-finger"),
 )
 FINGER_LABELS = {value: label for label, value in FINGERS}
+ENROLLED_FINGER_RE = re.compile(r"^\s*-\s+#\d+:\s+([a-z-]+)\s*$")
 
 
 def run(*args: str, timeout: float = 3.0) -> subprocess.CompletedProcess[str]:
@@ -391,11 +392,53 @@ def launch_terminal(action: str, *args: str) -> int:
         return 1
 
 
-def choose_finger(title: str) -> str | None:
-    labels = tuple(label for label, _finger in FINGERS)
+def enrolled_fingers() -> list[str] | None:
+    result = run("fprintd-list", current_user(), timeout=10.0)
+    if result.returncode != 0:
+        message = result.stderr.strip() or "Could not list registered fingerprints"
+        notify("Fingerprint status", message)
+        return None
+    found = {
+        match.group(1)
+        for line in result.stdout.splitlines()
+        if (match := ENROLLED_FINGER_RE.match(line))
+        and match.group(1) in FINGER_LABELS
+    }
+    return [finger for _label, finger in FINGERS if finger in found]
+
+
+def choose_finger(
+    title: str,
+    fingers: list[str] | None = None,
+    annotation: str = "",
+) -> str | None:
+    available = set(fingers) if fingers is not None else None
+    entries = [
+        (f"{label}{annotation}", finger)
+        for label, finger in FINGERS
+        if available is None or finger in available
+    ]
+    labels = tuple(label for label, _finger in entries)
     result = run("omarchy-menu-select", title, *labels, timeout=120.0)
     choice = result.stdout.strip()
-    return next((finger for label, finger in FINGERS if choice == label), None)
+    return next((finger for label, finger in entries if choice == label), None)
+
+
+def choose_registered_finger() -> str | None:
+    fingers = enrolled_fingers()
+    if fingers is None:
+        return None
+    if not fingers:
+        notify(
+            "Fingerprint status",
+            f"No fingerprints are registered for {current_user()}",
+        )
+        return None
+    return choose_finger(
+        "Replace registered fingerprint",
+        fingers,
+        " (registered)",
+    )
 
 
 def actions_menu() -> int:
@@ -416,7 +459,7 @@ def actions_menu() -> int:
         finger = choose_finger("Add fingerprint")
         return launch_terminal("enroll", finger) if finger else 0
     if choice == options[2]:
-        finger = choose_finger("Replace fingerprint")
+        finger = choose_registered_finger()
         return launch_terminal("replace", finger) if finger else 0
     if choice == options[3]:
         return launch_terminal("reset-fingerprints")
