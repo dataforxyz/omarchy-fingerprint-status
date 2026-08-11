@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import re
@@ -24,6 +25,19 @@ ERROR_PATTERNS = (
     ("power down failed", "reader failed to power down"),
     ("unexpected result from device", "reader returned an unexpected result"),
 )
+FINGERS = (
+    ("Left thumb", "left-thumb"),
+    ("Left index finger", "left-index-finger"),
+    ("Left middle finger", "left-middle-finger"),
+    ("Left ring finger", "left-ring-finger"),
+    ("Left little finger", "left-little-finger"),
+    ("Right thumb", "right-thumb"),
+    ("Right index finger", "right-index-finger"),
+    ("Right middle finger", "right-middle-finger"),
+    ("Right ring finger", "right-ring-finger"),
+    ("Right little finger", "right-little-finger"),
+)
+FINGER_LABELS = {value: label for label, value in FINGERS}
 
 
 def run(*args: str, timeout: float = 3.0) -> subprocess.CompletedProcess[str]:
@@ -274,15 +288,80 @@ def clear_history(*, notify_user: bool = True) -> int:
     return 0
 
 
-def test_reader() -> int:
+def current_user() -> str:
+    return os.environ.get("USER") or os.environ.get("LOGNAME") or getpass.getuser()
+
+
+def run_fprintd(*args: str) -> int:
     try:
-        return subprocess.run(
-            ("fprintd-verify", os.environ.get("USER", "")),
-            check=False,
-        ).returncode
+        return subprocess.run(args, check=False).returncode
     except OSError as exc:
-        print(f"Could not start fingerprint test: {exc}", file=sys.stderr)
+        print(f"Could not run {args[0]}: {exc}", file=sys.stderr)
         return 127
+
+
+def test_reader() -> int:
+    return run_fprintd("fprintd-verify", current_user())
+
+
+def valid_finger(finger: str) -> bool:
+    if finger in FINGER_LABELS:
+        return True
+    print(f"Unknown finger: {finger}", file=sys.stderr)
+    return False
+
+
+def confirm(prompt: str) -> bool:
+    try:
+        return input(f"{prompt} [y/N] ").strip().lower() in {"y", "yes"}
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
+def enroll_fingerprint(finger: str) -> int:
+    if not valid_finger(finger):
+        return 2
+    label = FINGER_LABELS[finger]
+    print(f"Enrolling {label.lower()} for {current_user()}…")
+    result = run_fprintd("fprintd-enroll", "-f", finger, current_user())
+    if result == 0:
+        clear_history(notify_user=False)
+        print(f"{label} enrolled successfully.")
+    else:
+        print(f"Could not enroll {label.lower()}.", file=sys.stderr)
+    return result
+
+
+def replace_fingerprint(finger: str) -> int:
+    if not valid_finger(finger):
+        return 2
+    label = FINGER_LABELS[finger]
+    if not confirm(
+        f"Replace {label.lower()} for {current_user()}? The saved print will be deleted first."
+    ):
+        print("Replacement cancelled.")
+        return 0
+    result = run_fprintd("fprintd-delete", current_user(), "-f", finger)
+    if result != 0:
+        print(f"Could not delete the saved {label.lower()}.", file=sys.stderr)
+        return result
+    print(f"Saved {label.lower()} deleted. Starting enrollment…")
+    return enroll_fingerprint(finger)
+
+
+def reset_fingerprints() -> int:
+    user = current_user()
+    if not confirm(f"Delete all saved fingerprints for {user}?"):
+        print("Fingerprint reset cancelled.")
+        return 0
+    result = run_fprintd("fprintd-delete", user)
+    if result == 0:
+        clear_history(notify_user=False)
+        print("All saved fingerprints were deleted. Use Add fingerprint to enroll again.")
+    else:
+        print("Could not delete saved fingerprints.", file=sys.stderr)
+    return result
 
 
 def reset_reader() -> int:
@@ -299,9 +378,11 @@ def reset_reader() -> int:
     return result.returncode
 
 
-def launch_terminal(action: str) -> int:
+def launch_terminal(action: str, *args: str) -> int:
     launcher = "omarchy-launch-floating-terminal-with-presentation"
-    command = f"{shlex.quote(str(Path(__file__).resolve()))} {shlex.quote(action)}"
+    command = " ".join(
+        shlex.quote(part) for part in (str(Path(__file__).resolve()), action, *args)
+    )
     try:
         subprocess.Popen(
             (launcher, command),
@@ -315,22 +396,40 @@ def launch_terminal(action: str) -> int:
         return 1
 
 
+def choose_finger(title: str) -> str | None:
+    labels = tuple(label for label, _finger in FINGERS)
+    result = run("omarchy-menu-select", title, *labels, timeout=120.0)
+    choice = result.stdout.strip()
+    return next((finger for label, finger in FINGERS if choice == label), None)
+
+
 def actions_menu() -> int:
     options = (
         "Test fingerprint reader",
+        "Add fingerprint",
+        "Replace fingerprint",
+        "Reset all fingerprints",
         "Diagnose fingerprint reader",
         "Clear status history",
-        "Reset fprintd service",
+        "Restart fprintd service",
     )
     result = run("omarchy-menu-select", "Fingerprint", *options, timeout=120.0)
     choice = result.stdout.strip()
     if choice == options[0]:
         return launch_terminal("test")
     if choice == options[1]:
-        return launch_terminal("diagnose")
+        finger = choose_finger("Add fingerprint")
+        return launch_terminal("enroll", finger) if finger else 0
     if choice == options[2]:
-        return clear_history()
+        finger = choose_finger("Replace fingerprint")
+        return launch_terminal("replace", finger) if finger else 0
     if choice == options[3]:
+        return launch_terminal("reset-fingerprints")
+    if choice == options[4]:
+        return launch_terminal("diagnose")
+    if choice == options[5]:
+        return clear_history()
+    if choice == options[6]:
         return launch_terminal("reset")
     return 0
 
@@ -348,6 +447,15 @@ def main() -> int:
         return launch_terminal("test")
     if command == "clear":
         return clear_history()
+    if command in {"enroll", "replace"}:
+        if len(sys.argv) != 3:
+            print(f"Usage: omarchy-fingerprint-status {command} <finger>", file=sys.stderr)
+            return 2
+        if command == "enroll":
+            return enroll_fingerprint(sys.argv[2])
+        return replace_fingerprint(sys.argv[2])
+    if command == "reset-fingerprints":
+        return reset_fingerprints()
     if command == "reset":
         return reset_reader()
     if command == "open-reset":
@@ -356,7 +464,8 @@ def main() -> int:
         return actions_menu()
     print(
         "Usage: omarchy-fingerprint-status "
-        "[status|diagnose|test|open-test|clear|reset|open-reset|menu]",
+        "[status|diagnose|test|open-test|clear|enroll <finger>|replace <finger>|"
+        "reset-fingerprints|reset|open-reset|menu]",
         file=sys.stderr,
     )
     return 2

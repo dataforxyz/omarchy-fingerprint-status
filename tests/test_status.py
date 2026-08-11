@@ -107,6 +107,74 @@ class StatusTests(unittest.TestCase):
             self.assertEqual(status.actions_menu(), 0)
         launch.assert_called_once_with("test")
 
+    def test_menu_adds_selected_finger_in_floating_terminal(self):
+        selections = (
+            status.subprocess.CompletedProcess([], 0, "Add fingerprint\n", ""),
+            status.subprocess.CompletedProcess([], 0, "Right index finger\n", ""),
+        )
+        with patch.object(status, "run", side_effect=selections), \
+             patch.object(status, "launch_terminal", return_value=0) as launch:
+            self.assertEqual(status.actions_menu(), 0)
+        launch.assert_called_once_with("enroll", "right-index-finger")
+
+    def test_menu_replaces_selected_finger_in_floating_terminal(self):
+        selections = (
+            status.subprocess.CompletedProcess([], 0, "Replace fingerprint\n", ""),
+            status.subprocess.CompletedProcess([], 0, "Left thumb\n", ""),
+        )
+        with patch.object(status, "run", side_effect=selections), \
+             patch.object(status, "launch_terminal", return_value=0) as launch:
+            self.assertEqual(status.actions_menu(), 0)
+        launch.assert_called_once_with("replace", "left-thumb")
+
+    def test_menu_resets_fingerprints_in_floating_terminal(self):
+        completed = status.subprocess.CompletedProcess([], 0, "Reset all fingerprints\n", "")
+        with patch.object(status, "run", return_value=completed), \
+             patch.object(status, "launch_terminal", return_value=0) as launch:
+            self.assertEqual(status.actions_menu(), 0)
+        launch.assert_called_once_with("reset-fingerprints")
+
+    def test_enroll_uses_selected_finger_and_clears_history(self):
+        with patch.dict(os.environ, {"USER": "alice"}), \
+             patch.object(status, "run_fprintd", return_value=0) as run_fprintd, \
+             patch.object(status, "clear_history") as clear:
+            self.assertEqual(status.enroll_fingerprint("right-thumb"), 0)
+        run_fprintd.assert_called_once_with(
+            "fprintd-enroll", "-f", "right-thumb", "alice"
+        )
+        clear.assert_called_once_with(notify_user=False)
+
+    def test_replace_deletes_only_selected_finger_before_enrolling(self):
+        with patch.dict(os.environ, {"USER": "alice"}), \
+             patch.object(status, "confirm", return_value=True), \
+             patch.object(status, "run_fprintd", return_value=0) as run_fprintd, \
+             patch.object(status, "enroll_fingerprint", return_value=0) as enroll:
+            self.assertEqual(status.replace_fingerprint("left-index-finger"), 0)
+        run_fprintd.assert_called_once_with(
+            "fprintd-delete", "alice", "-f", "left-index-finger"
+        )
+        enroll.assert_called_once_with("left-index-finger")
+
+    def test_reset_fingerprints_requires_confirmation_and_deletes_all(self):
+        with patch.dict(os.environ, {"USER": "alice"}), \
+             patch.object(status, "confirm", return_value=True), \
+             patch.object(status, "run_fprintd", return_value=0) as run_fprintd, \
+             patch.object(status, "clear_history") as clear:
+            self.assertEqual(status.reset_fingerprints(), 0)
+        run_fprintd.assert_called_once_with("fprintd-delete", "alice")
+        clear.assert_called_once_with(notify_user=False)
+
+    def test_destructive_fingerprint_action_can_be_cancelled(self):
+        with patch.object(status, "confirm", return_value=False), \
+             patch.object(status, "run_fprintd") as run_fprintd:
+            self.assertEqual(status.reset_fingerprints(), 0)
+        run_fprintd.assert_not_called()
+
+    def test_unknown_finger_is_rejected(self):
+        with patch.object(status, "run_fprintd") as run_fprintd:
+            self.assertEqual(status.enroll_fingerprint("nose"), 2)
+        run_fprintd.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

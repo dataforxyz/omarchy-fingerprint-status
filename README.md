@@ -21,9 +21,16 @@ Hover the icon for the device name, current reason, last observed use, last fing
 |---|---|
 | Left-click | Open a floating terminal and run an interactive `fprintd-verify` test |
 | Middle-click | Clear the indicator's saved status/error history |
-| Right-click | Open an actions menu with Test, Diagnose, Clear history, and Reset fprintd |
+| Right-click | Open the fingerprint test, enrollment, replacement, reset, diagnosis, and service actions |
 
-**Reset fprintd** opens a terminal and runs `sudo systemctl restart fprintd.service`, so you can see the result and authorize it explicitly. It also clears the indicator history after a successful restart.
+The actions menu can:
+
+- **Add fingerprint** — choose a finger and enroll it with `fprintd-enroll`.
+- **Replace fingerprint** — choose a finger, confirm deletion of only that saved print, then enroll it again.
+- **Reset all fingerprints** — confirm deletion of every saved print for the current user. Add a new fingerprint afterward to enroll again.
+- **Restart fprintd service** — run `sudo systemctl restart fprintd.service` when the reader itself is stuck.
+
+Enrollment, replacement, fingerprint reset, testing, diagnosis, and service restart open in a floating terminal so prompts and scan progress remain visible. Successful management actions also clear stale indicator history.
 
 The equivalent terminal commands are:
 
@@ -31,9 +38,15 @@ The equivalent terminal commands are:
 omarchy-fingerprint-status test
 omarchy-fingerprint-status diagnose
 omarchy-fingerprint-status clear
+omarchy-fingerprint-status enroll right-index-finger
+omarchy-fingerprint-status replace right-index-finger
+omarchy-fingerprint-status reset-fingerprints
 omarchy-fingerprint-status reset
 omarchy-fingerprint-status menu
 ```
+
+Valid finger names are `left-thumb`, `left-index-finger`, `left-middle-finger`,
+`left-ring-finger`, `left-little-finger`, and their `right-*` equivalents.
 
 ## Install
 
