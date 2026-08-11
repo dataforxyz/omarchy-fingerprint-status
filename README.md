@@ -26,7 +26,7 @@ Hover the icon for the device name, current reason, last observed use, last fing
 The actions menu can:
 
 - **Add fingerprint** — choose a finger and enroll it with `fprintd-enroll`.
-- **Replace fingerprint** — choose a finger, confirm deletion of only that saved print, then enroll it again.
+- **Replace fingerprint** — choose a finger, confirm the replacement, then enroll it again without deleting the saved print first.
 - **Reset all fingerprints** — confirm deletion of every saved print for the current user. Add a new fingerprint afterward to enroll again.
 - **Restart fprintd service** — run `sudo systemctl restart fprintd.service` when the reader itself is stuck.
 

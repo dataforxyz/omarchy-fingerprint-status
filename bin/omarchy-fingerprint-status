@@ -338,15 +338,10 @@ def replace_fingerprint(finger: str) -> int:
         return 2
     label = FINGER_LABELS[finger]
     if not confirm(
-        f"Replace {label.lower()} for {current_user()}? The saved print will be deleted first."
+        f"Replace {label.lower()} for {current_user()}? The saved print will be overwritten."
     ):
         print("Replacement cancelled.")
         return 0
-    result = run_fprintd("fprintd-delete", current_user(), "-f", finger)
-    if result != 0:
-        print(f"Could not delete the saved {label.lower()}.", file=sys.stderr)
-        return result
-    print(f"Saved {label.lower()} deleted. Starting enrollment…")
     return enroll_fingerprint(finger)
 
 

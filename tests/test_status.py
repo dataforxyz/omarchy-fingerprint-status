@@ -144,15 +144,13 @@ class StatusTests(unittest.TestCase):
         )
         clear.assert_called_once_with(notify_user=False)
 
-    def test_replace_deletes_only_selected_finger_before_enrolling(self):
+    def test_replace_overwrites_selected_finger_without_deleting_first(self):
         with patch.dict(os.environ, {"USER": "alice"}), \
              patch.object(status, "confirm", return_value=True), \
-             patch.object(status, "run_fprintd", return_value=0) as run_fprintd, \
+             patch.object(status, "run_fprintd") as run_fprintd, \
              patch.object(status, "enroll_fingerprint", return_value=0) as enroll:
             self.assertEqual(status.replace_fingerprint("left-index-finger"), 0)
-        run_fprintd.assert_called_once_with(
-            "fprintd-delete", "alice", "-f", "left-index-finger"
-        )
+        run_fprintd.assert_not_called()
         enroll.assert_called_once_with("left-index-finger")
 
     def test_reset_fingerprints_requires_confirmation_and_deletes_all(self):
