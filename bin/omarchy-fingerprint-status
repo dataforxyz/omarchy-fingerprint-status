@@ -419,7 +419,7 @@ def choose_finger(
         if available is None or finger in available
     ]
     labels = tuple(label for label, _finger in entries)
-    result = run("omarchy-menu-select", title, *labels, timeout=120.0)
+    result = run("omarchy-menu-select", title, *labels, "--", "--width", "720", "--maxheight", "600", timeout=120.0)
     choice = result.stdout.strip()
     return next((finger for label, finger in entries if choice == label), None)
 
@@ -451,7 +451,7 @@ def actions_menu() -> int:
         "Clear status history",
         "Restart fprintd service",
     )
-    result = run("omarchy-menu-select", "Fingerprint", *options, timeout=120.0)
+    result = run("omarchy-menu-select", "Fingerprint", *options, "--", "--width", "720", "--maxheight", "600", timeout=120.0)
     choice = result.stdout.strip()
     if choice == options[0]:
         return launch_terminal("test")
