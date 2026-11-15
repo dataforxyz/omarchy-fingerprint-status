@@ -1,6 +1,6 @@
 # omarchy-fingerprint-status
 
-A small [Waybar](https://github.com/Alexays/Waybar) indicator for fingerprint-reader health on [Omarchy](https://omarchy.org/).
+A small fingerprint-reader health helper for [Omarchy](https://omarchy.org). It provides JSON status for a bar indicator, plus reader tests and management menus.
 
 It helps make stuck `fprintd` sessions visible instead of leaving you to discover them when authentication stops working.
 
@@ -47,6 +47,26 @@ omarchy-fingerprint-status menu
 
 Valid finger names are `left-thumb`, `left-index-finger`, `left-middle-finger`,
 `left-ring-finger`, `left-little-finger`, and their `right-*` equivalents.
+
+## Omarchy Quattro
+
+Current `main` supports the Quattro native menu for fingerprint actions. The status command
+continues to print JSON suitable for a bar module:
+
+```bash
+omarchy-fingerprint-status status
+```
+
+The repository installer below configures **Waybar**. Omarchy Quattro uses its Quickshell bar,
+so `./install.sh` is for Waybar setups and does not install a Quickshell widget. On Quattro,
+install the helper itself with `install -Dm755 bin/omarchy-fingerprint-status ~/.local/bin/omarchy-fingerprint-status`
+and configure a shell widget separately. Ben’s personal Quattro widget and bar configuration are
+saved in the private [omarchy-desktop-config](https://github.com/dataforxyz/omarchy-desktop-config) repository.
+
+The previous pre-Quattro source is preserved at
+[`archive/pre-quattro-20261115`](https://github.com/dataforxyz/omarchy-fingerprint-status/tree/archive/pre-quattro-20261115).
+After cloning, use `git switch --detach archive/pre-quattro-20261115` to inspect it. This is a
+historical archive, not a maintained compatibility branch.
 
 ## Install
 
